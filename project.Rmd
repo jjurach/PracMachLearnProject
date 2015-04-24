@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Project Writeup"
+output: html_document
+---
+```{r load_libraries, echo=FALSE}
+library(ggplot2)
+library(lattice)
+library(randomForest)
+library(caret)
+library(e1071)
+set.seed(669699)
+```
+
+# Overview
+
+The best machine learning algorithm I developed to predict activity quality from activity monitors was with random forest, as presented below.  The OOB estimate of error rate was identified to be **2.18%**, so that is what I expected to see in my cross-validation predictions.
+
+When I first attempted random forest, I applied the form "class ~ ." to the train() function to train against all 150+ variables, and I never waited long enough to see a result. I then produced series of graphs and looked for aesthetic, clean features with distinct variations during different regions of time.  With a few selected variables, I was able to produce a fairly quick model with **8.87%** OOB estimate of error rate.
+
+Considering which variables to add next, I noticed that all of the accel_\* variables were similarly interesting looking and cheap to add to my training.  After adding these to my list of predictor columns, I ended up with the **2.18%** error rate.
+
+## Download, cache, and read data.
+```{r get_data}
+getdata <- function(file, url) {
+  if (! file.exists(file)) {
+    paste("downloading", url, "into", file, "...")
+    download.file(url, file, method="wget")
+  }
+  read.csv(file)
+}
+pmlData1 <- getdata("pml-training.csv",
+                    "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+pmlData2 <- getdata("pml-testing.csv",
+                    "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+
+## Create data partitions for cross-validation
+```{r create_partitions}
+inTrain <- createDataPartition(pmlData1$user_name, p=0.8, list=FALSE)
+trainingData <- pmlData1[ inTrain, ]
+testData     <- pmlData1[-inTrain, ]
+```
+
+## Determine predictors
+```{r configure_predictors}
+predictors <- c(
+  'roll_belt'
+  , 'gyros_belt_z'
+  , 'roll_arm'
+  , 'pitch_arm'
+  , 'yaw_arm'
+  , 'magnet_arm_z'
+  , 'roll_dumbbell'
+)
+
+all_cols <- colnames(trainingData)
+predictors <- c(predictors, all_cols[grep("^accel", all_cols)])
+```
+
+## Random Forest Model
+```{r compute_rf_model}
+rf_model <- randomForest(trainingData[,predictors], trainingData$classe)
+rf_model
+importance(rf_model)
+```
+
+Confusion matrix applied to cross validation partition:
+```{r cross_validate_rf_model}
+confusionMatrix(predict(rf_model, testData[,predictors]), testData$classe)
+```
+
+
+# Visualizations
+
+These are the "interesting" variables which seemed pretty to me.  First, I chose just a sampling of graphs which looked to have distinct regions of graph, and then I noticed that all of the accel_* graphs also seemed to have nice variability.
+```{r plot_interesting}
+
+plot_traces <- function(data, columns, step) {
+  for (cur in seq(1,length(columns),step)) {
+    first <- cur
+    last <- min(cur+step-1, length(columns))
+    plot.ts(data[,columns[first:last]], main=paste(columns[first],"...",columns[last]))
+  }  
+}
+plot_traces(pmlData1, c('classe', predictors), 4)
+```
+
+
+This code would display the remaining, "uninteresting", boring variables which seemed either redundant or to have missing or unvarying data.
+```{r plot_uninteresting}
+all_data_cols <- colnames(pmlData1[,7:159])
+uninteresting <- setdiff(all_data_cols, predictors)
+#plot_traces(pmlData1, uninteresting, 8)
+```
+
+## Summarize people in the data.
+```{r people_summary}
+df <- pmlData1
+people.names <- unique(df$user_name)
+people <- data.frame(
+  names=people.names,
+  count=sapply(people.names, function(name) { nrow(df[df$user_name==name,]) }),
+  min_t=sapply(people.names, function(name) {
+    as.character(head(df[df$user_name==name,]$cvtd_timestamp,1)) }),
+  max_t=sapply(people.names, function(name) {
+    as.character(tail(df[df$user_name==name,]$cvtd_timestamp,1)) })
+)
+people
+```
+
+# Final Testing Results
+
+```{r testing_results}
+df <- pmlData2
+results <- data.frame(
+  problem_id=df$problem_id,
+  result=predict(rf_model, df[,predictors])
+)
+results
+```
